@@ -1880,9 +1880,9 @@ function renderTrend(){
 
   // ── Datasets: bars order=1 (behind), lines order=2 (on top) ──
   // With grouped:false each bar fills the full slot width; null = nothing drawn
-  const bOpts = { barPercentage: barPctVal, categoryPercentage: 0.9, borderRadius: 3, yAxisID:'y', order: 1 };
+  // order: LOWER = drawn LAST = on top in Chart.js 4
+  const bOpts = { barPercentage: barPctVal, categoryPercentage: 0.9, borderRadius: 3, yAxisID:'y', order: 10 };
   const trendDatasets = [
-    // Largest bars first (drawn first = furthest back), smallest last = visible on top
     ...(hasForecast ? [{ type:'bar', label:'\uC608\uC0C1', data: forecastData,
         backgroundColor:'rgba(232,112,58,0.45)', ...bOpts }] : []),
     ...(hasTarget   ? [{ type:'bar', label:'\uBAA9\uD45C', data: targetData,
@@ -1890,19 +1890,19 @@ function renderTrend(){
     { type:'bar', label:'\uB9E4\uCD9C (KRW)', data: allActual,
         backgroundColor: state.palette[0], ...bOpts },
 
-    // Lines: order=2 so they render AFTER bars → on top
+    // Lines: order=1 → drawn LAST (after bars) → visible on top
     { type:'line', label:'YoY (\uC2E4\uC801%)', data: yoySolid,
       borderColor: lineColor, backgroundColor:'transparent', yAxisID:'y1',
       tension:0, pointRadius:5, pointBackgroundColor:'#fff', pointBorderColor:lineColor,
-      pointBorderWidth:2.5, borderWidth:2.5, order:2 },
+      pointBorderWidth:2.5, borderWidth:2.5, order:1 },
     ...(hasYoyTarget ? [{ type:'line', label:'YoY (\uBAA9\uD45C%)', data: yoyTargetLine,
       borderColor:'#5fa89e', backgroundColor:'transparent', yAxisID:'y1',
-      tension:0, borderDash:[7,4], borderWidth:2.5, order:2,
+      tension:0, borderDash:[7,4], borderWidth:2.5, order:1,
       pointRadius: (ctx) => ctx.dataIndex===curYearIdx && yoyTargetLine[ctx.dataIndex]!==null ? 7 : 0,
       pointStyle:'triangle', pointBackgroundColor:'#5fa89e', pointBorderColor:'#5fa89e', pointBorderWidth:0 }] : []),
     ...(hasYoyForecast ? [{ type:'line', label:'YoY (\uC608\uC0C1%)', data: yoyForecastLine,
       borderColor:'rgba(232,112,58,0.9)', backgroundColor:'transparent', yAxisID:'y1',
-      tension:0, borderDash:[4,4], borderWidth:2.5, order:2,
+      tension:0, borderDash:[4,4], borderWidth:2.5, order:1,
       pointRadius: (ctx) => ctx.dataIndex===curYearIdx && yoyForecastLine[ctx.dataIndex]!==null ? 7 : 0,
       pointStyle:'rectRot', pointBackgroundColor:'rgba(232,112,58,0.9)', pointBorderColor:'rgba(232,112,58,0.9)', pointBorderWidth:0 }] : []),
   ];
@@ -1984,7 +1984,6 @@ function renderTrend(){
     type: 'bar',
     data: { labels: allYears.map(y => y===currentYear&&(hasTarget||hasForecast) ? y+'\uB144 \u2605' : y+'\uB144'), datasets: trendDatasets },
     options: { ...chartDefaults,
-      grouped: false,   // ← KEY: each bar fills its own label slot, no empty space for nulls
       plugins:{...chartDefaults.plugins,
         legend:{...chartDefaults.plugins.legend,
           labels:{
@@ -2363,7 +2362,16 @@ function renderCountryDetail(records, list){
   charts['cd-cat'] = new Chart(document.getElementById('cd-cat'), {
     type:'doughnut',
     data:{ labels: catArr.map(c=>c.name), datasets:[{ data: catArr.map(c=>c.krw), backgroundColor: catArr.map((_,i)=>state.palette[i % state.palette.length]), borderColor:'#fff', borderWidth:2 }] },
-    options:{ responsive:true, maintainAspectRatio:false, cutout:'60%', plugins:{ legend:{ position:'right', labels:{font:{family:'Pretendard Variable',size:11}, color:'#57534e', boxWidth:8, padding:6} }, tooltip:{ callbacks:{ label: c=>`${c.label}: ${fmt.krw(c.raw)} (${(c.raw/cTotal*100).toFixed(1)}%)` } } } }
+    options:{ responsive:true, maintainAspectRatio:false, cutout:'60%',
+      plugins:{ legend:{ position:'right',
+        labels:{font:{family:'Pretendard Variable',size:12}, color:'#57534e', boxWidth:10, padding:8,
+          generateLabels: chart => chart.data.labels.map((lbl, i) => {
+            const val = chart.data.datasets[0].data[i];
+            const pct = cTotal > 0 ? (val/cTotal*100).toFixed(1) : '0';
+            return { text: `${lbl}  ${fmt.krw(val)} (${pct}%)`, fillStyle: chart.data.datasets[0].backgroundColor[i], strokeStyle: '#fff', lineWidth:0, index:i, datasetIndex:0 };
+          })
+        }},
+        tooltip:{ callbacks:{ label: c=>`${c.label}: ${fmt.krw(c.raw)} (${(c.raw/cTotal*100).toFixed(1)}%)` } } } }
   });
   document.getElementById('cd-insights').innerHTML = generateCountryInsights(cRec, c, cTotal, totalAll, years, customers, monthly).map(insightHTML).join('');
 }
@@ -2486,7 +2494,16 @@ function renderProduct(){
     charts['pr-other-pie'] = new Chart(document.getElementById('pr-other-pie'), {
       type:'doughnut',
       data:{ labels: otherCatTotal.map(c=>c.c), datasets:[{ data: otherCatTotal.map(c=>c.t), backgroundColor: otherCatTotal.map((_,i)=>state.palette[(i+1) % state.palette.length]), borderColor:'#fff', borderWidth:2 }] },
-      options:{ responsive:true, maintainAspectRatio:false, cutout:'60%', plugins:{ legend:{ position:'right', labels:{font:{family:'Pretendard Variable',size:11}, color:'#44403c', boxWidth:8, padding:6} }, tooltip:{ callbacks:{ label:c=>`${c.label}: ${fmt.krw(c.raw)} (${(c.raw/otherTotal*100).toFixed(1)}%)` } } } }
+      options:{ responsive:true, maintainAspectRatio:false, cutout:'60%',
+        plugins:{ legend:{ position:'right',
+          labels:{font:{family:'Pretendard Variable',size:12}, color:'#44403c', boxWidth:10, padding:8,
+            generateLabels: chart => chart.data.labels.map((lbl,i)=>{
+              const val = chart.data.datasets[0].data[i];
+              const pct = otherTotal>0?(val/otherTotal*100).toFixed(1):'0';
+              return {text:`${lbl}  ${fmt.krw(val)} (${pct}%)`, fillStyle:chart.data.datasets[0].backgroundColor[i], strokeStyle:'#fff', lineWidth:0, index:i, datasetIndex:0};
+            })
+          }},
+          tooltip:{ callbacks:{ label:c=>`${c.label}: ${fmt.krw(c.raw)} (${(c.raw/otherTotal*100).toFixed(1)}%)` } } } }
     });
   }
   document.getElementById('pr-insights').innerHTML = generateProductInsights(records, fillerTotal, otherTotal, total, otherCatTotal, years).map(insightHTML).join('');
@@ -2843,10 +2860,26 @@ function renderGoal(){
     if (canvas) { canvas.style.display=''; canvas.parentElement?.querySelectorAll('.empty-state').forEach(e=>e.remove()); }
     if (target?.byCountry && canvas) {
       const countries = Object.keys(target.byCountry).sort((a,b)=>target.byCountry[b]-target.byCountry[a]).slice(0,10);
+      // forecast per country: split total forecast proportionally by target share
+      const fcByCountry = c => {
+        const totalT = countries.reduce((s,cc)=>(target.byCountry[cc]||0)+s, 0);
+        const myT = target.byCountry[c] || 0;
+        const fcTotal = Object.values(state.monthlyForecasts[year]||{}).flat().reduce((s,r)=>s+calcMfcKrw(r),0);
+        return totalT > 0 ? Math.round(fcTotal * myT / totalT) : 0;
+      };
+      const fcData = countries.map(fcByCountry);
+      const hasFcCountry = fcData.some(v=>v>0);
       charts['goal-country-chart'] = new Chart(canvas, { type:'bar',
-        data:{ labels:countries, datasets:[ { label:'목표', data:countries.map(c=>target.byCountry[c]), backgroundColor:'#bcd0ed', borderWidth:0, borderRadius:2 }, { label:'실적', data:countries.map(c=>actualRecs.filter(r=>r.country===c).reduce((s,r)=>s+r.krw,0)), backgroundColor:state.palette[0], borderWidth:0, borderRadius:2 } ]},
-        options:{ ...chartDefaults, indexAxis:'y', plugins:{...chartDefaults.plugins, tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt.krw(c.raw)}`}}},
-          scales:{ y:{grid:{display:false},ticks:{color:'#57534e',font:{family:'Pretendard Variable, sans-serif',size:11}}}, x:{grid:{color:'#f5f5f4'},ticks:{color:'#a8a29e',callback:v=>v>=1e8?(v/1e8).toFixed(0)+'억':v.toLocaleString()}} } } });
+        data:{ labels:countries, datasets:[
+          { label:'목표', data:countries.map(c=>target.byCountry[c]), backgroundColor:'#bcd0ed', borderWidth:0, borderRadius:2 },
+          { label:'실적', data:countries.map(c=>actualRecs.filter(r=>r.country===c).reduce((s,r)=>s+r.krw,0)), backgroundColor:state.palette[0], borderWidth:0, borderRadius:2 },
+          ...(hasFcCountry ? [{ label:'예상', data:fcData, backgroundColor:'rgba(16,185,129,0.45)', borderWidth:1, borderColor:'#10b981', borderRadius:2 }] : []),
+        ]},
+        options:{ ...chartDefaults, indexAxis:'y',
+          plugins:{...chartDefaults.plugins,
+            legend:{...chartDefaults.plugins.legend, display:true, position:'top', labels:{font:{family:'Pretendard Variable',size:12}, boxWidth:10, padding:10}},
+            tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt.krw(c.raw)}`}}},
+          scales:{ y:{grid:{display:false},ticks:{color:'#57534e',font:{family:'Pretendard Variable, sans-serif',size:12}}}, x:{grid:{color:'#f5f5f4'},ticks:{color:'#a8a29e',callback:v=>v>=1e8?(v/1e8).toFixed(0)+'억':v.toLocaleString()}} } } });
     } else if (canvas?.parentElement) {
       canvas.style.display='none';
       if (!canvas.parentElement.querySelector('.empty-state')) { const d=document.createElement('div'); d.className='empty-state'; d.style.cssText='height:200px;display:flex;align-items:center;justify-content:center'; d.textContent='목표 파일을 업로드하면 표시됩니다'; canvas.parentElement.appendChild(d); }
@@ -3063,7 +3096,7 @@ function renderMonthlyForecast(year){
         ${!isPast && target ? `<span style="font-size:11px;color:var(--ink-3)">달성률: <strong>${actualTotal+fcTotal>0?((actualTotal+fcTotal)/target*100).toFixed(1)+'%':'—'}</strong></span>` : ''}
         <span style="font-size:12px;color:var(--ink-3)">${m===curMonth?'▲':'▼'}</span>
       </div>
-      <div class="mfc-month-body ${m===curMonth?'open':''}" id="mfc-body-${m}">`;
+      <div class="mfc-month-body" id="mfc-body-${m}">`;
 
     if (isPast) {
       if (actualRecs.length === 0) {
