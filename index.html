@@ -1015,16 +1015,16 @@ function withTimeout(promise, ms, label){
 }
 async function saveRecordsToFirestore(records, sessionId){
   if (!fbDb || !records.length) return;
-  const BATCH_SIZE = 100; // smaller batches for slow connections
+  const BATCH_SIZE = 30; // small batches for stability
   const chunks = [];
   for (let i = 0; i < records.length; i += BATCH_SIZE) chunks.push(records.slice(i, i+BATCH_SIZE));
   setSyncStatus(`저장 중 (0/${chunks.length} 배치)…`, 'syncing');
   for (let ci = 0; ci < chunks.length; ci++) {
     const chunk = chunks[ci];
     setSyncStatus(`저장 중 (${ci+1}/${chunks.length} 배치, ${Math.min((ci+1)*BATCH_SIZE,records.length)}/${records.length}건)…`, 'syncing');
-    // Retry up to 3 times with exponential backoff
+    // Retry up to 5 times with exponential backoff
     let attempt = 0, lastErr = null;
-    while (attempt < 3) {
+    while (attempt < 5) {
       try {
         const batch = fbDb.batch();
         const ref = fbDb.collection('salesRecords');
@@ -1037,21 +1037,22 @@ async function saveRecordsToFirestore(records, sessionId){
           batch.set(docRef, clean);
           r._id = docRef.id;
         });
-        // Generous timeout: 120s for first batch (cold connection), 60s subsequent
-        const timeoutMs = ci === 0 ? 120000 : 60000;
+        // Generous timeout: 180s for first batch (cold connection), 120s subsequent
+        const timeoutMs = ci === 0 ? 180000 : 120000;
         await withTimeout(batch.commit(), timeoutMs, `배치 ${ci+1}`);
         lastErr = null;
         break; // success
       } catch (err) {
         lastErr = err;
         attempt++;
-        if (attempt < 3) {
-          setSyncStatus(`배치 ${ci+1} 재시도 (${attempt}/3)…`, 'syncing');
-          await new Promise(r => setTimeout(r, 2000 * attempt));
+        if (attempt < 5) {
+          setSyncStatus(`배치 ${ci+1} 재시도 (${attempt}/5)…`, 'syncing');
+          await new Promise(r => setTimeout(r, 3000 * attempt));
         }
       }
     }
-    if (lastErr) throw new Error(`배치 ${ci+1} 저장 실패 (3회 재시도 후): ${lastErr.message}`);
+    if (lastErr) throw new Error(`배치 ${ci+1} 저장 실패 (5회 재시도 후): ${lastErr.message}`);
+  }
   }
   setSyncStatus(`${records.length}건 저장됨`, 'synced');
   state.cloudCount = records.length;
