@@ -527,14 +527,14 @@ td.fc-td:focus-within{ background:var(--accent-soft); }
       <div class="card-head"><div><div class="card-title">연도별 제품군 비중 (%)</div><div class="card-sub">category mix · share % by year</div></div><span class="card-tag">Mix</span></div>
       <!-- Split-axis cat chart: top = non-filler, bottom = filler -->
       <div id="tr-cat-split" style="position:relative">
-        <div style="height:200px"><canvas id="tr-cat-top"></canvas></div>
+        <div style="height:260px"><canvas id="tr-cat-top"></canvas></div>
         <div style="height:24px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin:0 4px">
           <svg viewBox="0 0 400 20" preserveAspectRatio="none" style="width:100%;height:100%">
             <path d="M0,10 Q50,2 100,10 Q150,18 200,10 Q250,2 300,10 Q350,18 400,10" stroke="#a8a29e" stroke-width="1.5" fill="none" stroke-dasharray="4,3"/>
             <path d="M0,14 Q50,6 100,14 Q150,22 200,14 Q250,6 300,14 Q350,22 400,14" stroke="#d6d3d1" stroke-width="1" fill="none" stroke-dasharray="4,3"/>
           </svg>
         </div>
-        <div style="height:160px"><canvas id="tr-cat-pct"></canvas></div>
+        <div style="height:200px"><canvas id="tr-cat-pct"></canvas></div>
       </div>
     </div>
   </div>
@@ -1855,8 +1855,8 @@ function renderTrend(){
 
   // Bars: always as thick as possible (single bar per year for past years)
   const nBarDs = 1 + (hasTarget?1:0) + (hasForecast?1:0);
-  const barPct  = nBarDs === 1 ? 1.0 : 0.92;
-  const catPct  = 0.88;
+  const barPct  = nBarDs === 1 ? 1.0 : 0.95;
+  const catPct  = 0.92;
 
   const lineColor = '#e8703a';
 
@@ -1908,59 +1908,96 @@ function renderTrend(){
     pointRadius: (ctx) => yoyForecastLine[ctx.dataIndex] !== null && ctx.dataIndex === curYearIdx ? 6 : 0,
     pointStyle:'rectRot', pointBackgroundColor:'rgba(232,112,58,0.9)', pointBorderColor:'rgba(232,112,58,0.9)', pointBorderWidth:0 });
 
-  // Plugin: bar top labels + YoY % badge on each line point
+  // Plugin: values above bars (KRW + YoY) — draw in afterDraw so we know all bar positions
   const topLabelPlugin2 = {
     id: 'topLabel2',
-    afterDatasetsDraw(chart) {
-      const { ctx } = chart;
-      chart.data.datasets.forEach((ds, di) => {
+    afterDraw(chart) {
+      const { ctx, data, scales } = chart;
+      // Collect bar x-positions per label index (use first bar dataset)
+      const barXByIdx = {};
+      let barMinY = Infinity;
+      data.datasets.forEach((ds, di) => {
+        if (ds.type === 'line' || ds.yAxisID === 'y1') return;
+        const meta = chart.getDatasetMeta(di);
+        if (!meta.visible) return;
+        meta.data.forEach((bar, idx) => {
+          if (!barXByIdx[idx]) barXByIdx[idx] = [];
+          barXByIdx[idx].push(bar.x);
+          if (bar.y < barMinY) barMinY = bar.y;
+        });
+      });
+      // Center x for each label group
+      const centerX = (idx) => {
+        const xs = barXByIdx[idx]; if (!xs || !xs.length) return null;
+        return xs.reduce((s,v)=>s+v,0)/xs.length;
+      };
+
+      // For each label index, find the tallest bar top (smallest y)
+      const topBarY = {};
+      data.datasets.forEach((ds, di) => {
+        if (ds.type === 'line' || ds.yAxisID === 'y1') return;
+        const meta = chart.getDatasetMeta(di);
+        if (!meta.visible) return;
+        meta.data.forEach((bar, idx) => {
+          if (topBarY[idx] === undefined || bar.y < topBarY[idx]) topBarY[idx] = bar.y;
+        });
+      });
+
+      // Draw KRW label for each bar dataset
+      data.datasets.forEach((ds, di) => {
+        if (ds.type === 'line' || ds.yAxisID === 'y1') return;
+        const meta = chart.getDatasetMeta(di);
+        if (!meta.visible) return;
+        const isTarget = ds.label === '목표';
+        const isFc     = ds.label === '예상';
+        meta.data.forEach((bar, idx) => {
+          const val = ds.data[idx];
+          if (!val) return;
+          const label = val >= 1e8 ? (val/1e8).toFixed(1)+'억' : (val/1e4).toFixed(0)+'만';
+          ctx.save();
+          ctx.font = 'bold 10px Pretendard Variable, sans-serif';
+          ctx.fillStyle = isTarget ? '#2d6a63' : isFc ? '#b85a20' : '#57534e';
+          ctx.textAlign = 'center';
+          ctx.fillText(label, bar.x, bar.y - 5);
+          ctx.restore();
+        });
+      });
+
+      // Draw YoY badges centered above each group
+      const yoyLineDs = data.datasets.filter(ds => ds.yAxisID === 'y1');
+      yoyLineDs.forEach(ds => {
+        const isTarget   = ds.label === 'YoY (목표%)';
+        const isForecast = ds.label === 'YoY (예상%)';
+        const isActual   = ds.label === 'YoY (실적%)';
+        const di = data.datasets.indexOf(ds);
         const meta = chart.getDatasetMeta(di);
         if (!meta.visible) return;
 
-        // Bar KRW labels on top of each bar
-        if (ds.type !== 'line' && ds.yAxisID !== 'y1') {
-          meta.data.forEach((bar, idx) => {
-            const val = ds.data[idx];
-            if (val == null || val === 0) return;
-            const label = val >= 1e8 ? (val/1e8).toFixed(1)+'억' : (val/1e4).toFixed(0)+'만';
-            ctx.save();
-            ctx.font = 'bold 10px Pretendard Variable, sans-serif';
-            ctx.fillStyle = '#57534e';
-            ctx.textAlign = 'center';
-            ctx.fillText(label, bar.x, bar.y - 5);
-            ctx.restore();
-          });
-        }
-
-        // YoY % badge on each visible line point
-        if (ds.yAxisID === 'y1') {
-          const isTarget   = ds.label === 'YoY (목표%)';
-          const isForecast = ds.label === 'YoY (예상%)';
-          const bgColor  = isTarget ? '#e4f4f1' : isForecast ? '#fde8d8' : '#f5f5f4';
-          const txtColor = isTarget ? '#2d6a63' : isForecast ? '#b85a20' : lineColor;
-          meta.data.forEach((pt, idx) => {
-            const val = ds.data[idx];
-            if (val == null) return;
-            // For dashed lines only show badge at currentYear endpoint
-            if ((isTarget || isForecast) && idx !== curYearIdx) return;
-            const sign  = val >= 0 ? '+' : '';
-            const label = sign + val.toFixed(1) + '%';
-            ctx.save();
-            ctx.font = 'bold 9px Pretendard Variable, sans-serif';
-            const tw = ctx.measureText(label).width + 8;
-            const th = 14;
-            // Position: above point (shift left for forecast to avoid overlap)
-            const offsetX = isForecast ? tw * 0.6 : 0;
-            const tx = pt.x - tw/2 - offsetX, ty = pt.y - th - 5;
-            ctx.fillStyle = bgColor;
-            if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, 3); ctx.fill(); }
-            else { ctx.fillRect(tx, ty, tw, th); }
-            ctx.fillStyle = txtColor;
-            ctx.textAlign = 'center';
-            ctx.fillText(label, pt.x - offsetX, ty + 10);
-            ctx.restore();
-          });
-        }
+        ds.data.forEach((val, idx) => {
+          if (val == null) return;
+          if ((isTarget || isForecast) && idx !== curYearIdx) return;
+          const cx = centerX(idx); if (cx === null) return;
+          const topY = topBarY[idx] ?? barMinY;
+          const sign  = val >= 0 ? '+' : '';
+          const label = sign + val.toFixed(1) + '%';
+          const bgColor  = isTarget ? '#e4f4f1' : isForecast ? '#fde8d8' : (val>=0?'#f0fdf4':'#fef2f2');
+          const txtColor = isTarget ? '#2d6a63'  : isForecast ? '#b85a20'  : (val>=0?'#16a34a':'#dc2626');
+          ctx.save();
+          ctx.font = 'bold 9px Pretendard Variable, sans-serif';
+          const tw = ctx.measureText(label).width + 8;
+          const th = 14;
+          // Stack: actual on top, then target, then forecast (offset horizontally if same bar)
+          const offsetX = isForecast ? tw + 2 : isTarget ? -(tw + 2) : 0;
+          const tx = cx - tw/2 + (isTarget||isForecast ? offsetX : 0);
+          const ty = topY - th - 20; // above KRW label
+          ctx.fillStyle = bgColor;
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, 3); ctx.fill(); }
+          else { ctx.fillRect(tx, ty, tw, th); }
+          ctx.fillStyle = txtColor;
+          ctx.textAlign = 'center';
+          ctx.fillText(label, tx + tw/2, ty + 10);
+          ctx.restore();
+        });
       });
     }
   };
@@ -2310,17 +2347,35 @@ function renderCountryDetail(records, list){
   `;
   // trend chart
   destroyChart('cd-trend');
+  const cdLabelPlugin = {
+    id:'cdLabel',
+    afterDatasetsDraw(chart){
+      const {ctx} = chart;
+      chart.data.datasets.forEach((ds,di)=>{
+        const meta = chart.getDatasetMeta(di);
+        if(!meta.visible) return;
+        meta.data.forEach((bar,idx)=>{
+          const val = ds.data[idx]; if(!val) return;
+          const label = val>=1e8?(val/1e8).toFixed(1)+'\uC5B5':val>=1e4?(val/1e4).toFixed(0)+'\uB9CC':val.toLocaleString();
+          ctx.save(); ctx.font='bold 9px Pretendard Variable,sans-serif'; ctx.fillStyle='#57534e'; ctx.textAlign='center';
+          ctx.fillText(label, bar.x, bar.y-5); ctx.restore();
+        });
+      });
+    }
+  };
   if (years.length > 1) {
     charts['cd-trend'] = new Chart(document.getElementById('cd-trend'), {
       type:'bar',
-      data:{ labels: years.map(y=>y+'년'), datasets:[{ data: yearly, backgroundColor: state.palette[0], borderRadius:3, barPercentage:0.55 }] },
-      options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{display:false}, tooltip:{callbacks:{label: c=>fmt.krw(c.raw)}}}, scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v.toLocaleString()}} } }
+      data:{ labels: years.map(y=>y+'년'), datasets:[{ data: yearly, backgroundColor: state.palette[0], borderRadius:3, barPercentage:0.65 }] },
+      options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{display:false}, tooltip:{callbacks:{label: c=>fmt.krw(c.raw)}}}, scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v.toLocaleString()}} } },
+      plugins:[cdLabelPlugin]
     });
   } else {
     charts['cd-trend'] = new Chart(document.getElementById('cd-trend'), {
       type:'bar',
-      data:{ labels: Array.from({length:12},(_,i)=>(i+1)+'월'), datasets:[{ data: monthly, backgroundColor: state.palette[0], borderRadius:2, barPercentage:0.65 }] },
-      options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{display:false}, tooltip:{callbacks:{label: c=>fmt.krw(c.raw)}}}, scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v.toLocaleString()}} } }
+      data:{ labels: Array.from({length:12},(_,i)=>(i+1)+'월'), datasets:[{ data: monthly, backgroundColor: state.palette[0], borderRadius:2, barPercentage:0.7 }] },
+      options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{display:false}, tooltip:{callbacks:{label: c=>fmt.krw(c.raw)}}}, scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v.toLocaleString()}} } },
+      plugins:[cdLabelPlugin]
     });
   }
   destroyChart('cd-cat');
@@ -2383,10 +2438,32 @@ function renderProduct(){
     backgroundColor: /필러/.test(cat) ? state.palette[0] : state.palette[(idx) % state.palette.length],
     borderRadius: 2, borderWidth: 0,
   }));
+  const prLabelPlugin = {
+    id:'prLabel',
+    afterDatasetsDraw(chart){
+      const {ctx} = chart;
+      chart.data.datasets.forEach((ds,di)=>{
+        const meta = chart.getDatasetMeta(di);
+        if(!meta.visible) return;
+        meta.data.forEach((bar,idx)=>{
+          const val = ds.data[idx]; if(!val || val<0.5) return;
+          const isPct = chart.options.scales?.y?.max===100;
+          const label = isPct ? (val>=2?val.toFixed(1)+'%':'') : (val>=1e8?(val/1e8).toFixed(1)+'\uC5B5':val>=1e7?(val/1e7).toFixed(0)+'\uCC9C\uB9CC':'');
+          if(!label) return;
+          const barH = bar.height||0;
+          ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+          if(barH>=16){ ctx.font='bold 9px Pretendard Variable,sans-serif'; ctx.fillStyle='#fff'; ctx.fillText(label,bar.x,bar.y+barH/2); }
+          else if(barH>=5){ ctx.font='8px Pretendard Variable,sans-serif'; ctx.fillStyle='#57534e'; ctx.fillText(label,bar.x,bar.y-6); }
+          ctx.restore();
+        });
+      });
+    }
+  };
   destroyChart('pr-yearly-stack');
   charts['pr-yearly-stack'] = new Chart(document.getElementById('pr-yearly-stack'), {
     type:'bar', data:{ labels: years.map(y=>y+'년'), datasets: stackDS },
-    options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{position:'bottom', labels:{font:{family:'Pretendard Variable',size:11}, boxWidth:8, padding:8}}, tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt.krw(c.raw)}`}}}, scales:{ x:{...chartDefaults.scales.x, stacked:true}, y:{...chartDefaults.scales.y, stacked:true, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(0)+'억':v.toLocaleString()}} } }
+    options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{position:'bottom', labels:{font:{family:'Pretendard Variable',size:11}, boxWidth:8, padding:8}}, tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt.krw(c.raw)}`}}}, scales:{ x:{...chartDefaults.scales.x, stacked:true}, y:{...chartDefaults.scales.y, stacked:true, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(0)+'억':v.toLocaleString()}} } },
+    plugins:[prLabelPlugin]
   });
 
   // Yearly category share %
@@ -2400,7 +2477,8 @@ function renderProduct(){
   destroyChart('pr-yearly-pct');
   charts['pr-yearly-pct'] = new Chart(document.getElementById('pr-yearly-pct'), {
     type:'bar', data:{ labels: years.map(y=>y+'년'), datasets: pctDS },
-    options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{position:'bottom', labels:{font:{family:'Pretendard Variable',size:11}, boxWidth:8, padding:8}}, tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${c.raw.toFixed(1)}%`}}}, scales:{ x:{...chartDefaults.scales.x, stacked:true}, y:{...chartDefaults.scales.y, stacked:true, max:100, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v+'%'}} } }
+    options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{position:'bottom', labels:{font:{family:'Pretendard Variable',size:11}, boxWidth:8, padding:8}}, tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${c.raw.toFixed(1)}%`}}}, scales:{ x:{...chartDefaults.scales.x, stacked:true}, y:{...chartDefaults.scales.y, stacked:true, max:100, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v+'%'}} } },
+    plugins:[prLabelPlugin]
   });
 
   // Non-filler yearly (line per category) + pie
