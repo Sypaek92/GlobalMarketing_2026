@@ -1853,44 +1853,34 @@ function renderTrend(){
   // Main YoY line: for current year show actual yoy (may be null), separate series for target/forecast yoy
   const yoyData = yoyActualData.slice();
 
-  // ── grouped:false = each bar fills its full label slot → no empty space for null datasets
-  // order: bars=1(drawn first=behind), lines=2(drawn last=on top)
-  // barPercentage/categoryPercentage applied per-dataset with grouped:false
-  const barPctVal = 0.85;
-
   const lineColor = '#e8703a';
 
-  // ── YoY data ──
-  const yoySolid      = yoyData.slice();
-  const curYearIdx    = allYears.indexOf(currentYear);
-  const prevYearIdx   = curYearIdx > 0 ? curYearIdx - 1 : -1;
-  const prevYoyVal    = prevYearIdx >= 0 ? yoyData[prevYearIdx] : null;
+  // ── YoY data (per-year actual; current year gets target/forecast dashes) ──
+  const yoySolid = yoyData.slice();
+  const curYearIdx  = allYears.indexOf(currentYear);
   const yoyTargetLine   = new Array(allYears.length).fill(null);
   const yoyForecastLine = new Array(allYears.length).fill(null);
-  if (yoyTarget !== null && curYearIdx >= 0) {
-    if (prevYoyVal !== null && prevYearIdx >= 0) yoyTargetLine[prevYearIdx] = prevYoyVal;
-    yoyTargetLine[curYearIdx] = yoyTarget;
-  }
-  if (yoyForecast !== null && curYearIdx >= 0) {
-    if (prevYoyVal !== null && prevYearIdx >= 0) yoyForecastLine[prevYearIdx] = prevYoyVal;
-    yoyForecastLine[curYearIdx] = yoyForecast;
-  }
+  if (yoyTarget   !== null && curYearIdx >= 0) yoyTargetLine[curYearIdx]   = yoyTarget;
+  if (yoyForecast !== null && curYearIdx >= 0) yoyForecastLine[curYearIdx] = yoyForecast;
   const hasYoyTarget   = yoyTargetLine.some(v=>v!==null);
   const hasYoyForecast = yoyForecastLine.some(v=>v!==null);
 
-  // ── Datasets: bars order=1 (behind), lines order=2 (on top) ──
-  // With grouped:false each bar fills the full slot width; null = nothing drawn
-  // order: LOWER = drawn LAST = on top in Chart.js 4
-  const bOpts = { barPercentage: barPctVal, categoryPercentage: 0.9, borderRadius: 3, yAxisID:'y', order: 10 };
-  const trendDatasets = [
-    ...(hasForecast ? [{ type:'bar', label:'\uC608\uC0C1', data: forecastData,
-        backgroundColor:'rgba(232,112,58,0.45)', ...bOpts }] : []),
-    ...(hasTarget   ? [{ type:'bar', label:'\uBAA9\uD45C', data: targetData,
-        backgroundColor:'rgba(139,191,184,0.6)', ...bOpts }] : []),
-    { type:'bar', label:'\uB9E4\uCD9C (KRW)', data: allActual,
-        backgroundColor: state.palette[0], ...bOpts },
+  // ── Bar strategy ──
+  // grouped:false → each bar independently fills its slot
+  // barPercentage=1.0 → past-year single bars fill the full slot width
+  // Plugin repositions current-year bars to be side-by-side (매출→목표→예상)
+  // Dataset order: 매출(KRW) first → 목표 → 예상  (left→right in current year)
+  // order:10 for bars (drawn first=behind), order:1 for lines (drawn last=on top)
+  const bOpts2 = { barPercentage: 1.0, categoryPercentage: 0.88, borderRadius: 3, yAxisID:'y', order: 10 };
 
-    // Lines: order=1 → drawn LAST (after bars) → visible on top
+  const trendDatasets = [
+    { type:'bar', label:'\uB9E4\uCD9C (KRW)', data: allActual,
+      backgroundColor: state.palette[0], ...bOpts2 },
+    ...(hasTarget   ? [{ type:'bar', label:'\uBAA9\uD45C', data: targetData,
+      backgroundColor:'rgba(139,191,184,0.75)', ...bOpts2 }] : []),
+    ...(hasForecast ? [{ type:'bar', label:'\uC608\uC0C1', data: forecastData,
+      backgroundColor:'rgba(232,112,58,0.55)', ...bOpts2 }] : []),
+    // Lines order=1 → drawn last → always on top of bars
     { type:'line', label:'YoY (\uC2E4\uC801%)', data: yoySolid,
       borderColor: lineColor, backgroundColor:'transparent', yAxisID:'y1',
       tension:0, pointRadius:5, pointBackgroundColor:'#fff', pointBorderColor:lineColor,
@@ -1898,35 +1888,69 @@ function renderTrend(){
     ...(hasYoyTarget ? [{ type:'line', label:'YoY (\uBAA9\uD45C%)', data: yoyTargetLine,
       borderColor:'#5fa89e', backgroundColor:'transparent', yAxisID:'y1',
       tension:0, borderDash:[7,4], borderWidth:2.5, order:1,
-      pointRadius: (ctx) => ctx.dataIndex===curYearIdx && yoyTargetLine[ctx.dataIndex]!==null ? 7 : 0,
-      pointStyle:'triangle', pointBackgroundColor:'#5fa89e', pointBorderColor:'#5fa89e', pointBorderWidth:0 }] : []),
+      pointRadius:8, pointStyle:'triangle',
+      pointBackgroundColor:'#5fa89e', pointBorderColor:'#5fa89e', pointBorderWidth:0 }] : []),
     ...(hasYoyForecast ? [{ type:'line', label:'YoY (\uC608\uC0C1%)', data: yoyForecastLine,
       borderColor:'rgba(232,112,58,0.9)', backgroundColor:'transparent', yAxisID:'y1',
       tension:0, borderDash:[4,4], borderWidth:2.5, order:1,
-      pointRadius: (ctx) => ctx.dataIndex===curYearIdx && yoyForecastLine[ctx.dataIndex]!==null ? 7 : 0,
-      pointStyle:'rectRot', pointBackgroundColor:'rgba(232,112,58,0.9)', pointBorderColor:'rgba(232,112,58,0.9)', pointBorderWidth:0 }] : []),
+      pointRadius:8, pointStyle:'rectRot',
+      pointBackgroundColor:'rgba(232,112,58,0.9)', pointBorderColor:'rgba(232,112,58,0.9)', pointBorderWidth:0 }] : []),
   ];
 
-  // ── Plugin: KRW labels above each bar + YoY badges above bar groups ──
+  // ── Plugin 1: reposition current-year bars to be grouped side-by-side ──
+  // Past-year bars keep barPercentage=1.0 (full slot width).
+  // Current year: split slot evenly among active bar datasets (left→right order).
+  const groupCurYearPlugin = {
+    id: 'groupCurYear',
+    beforeDatasetsDraw(chart) {
+      if (curYearIdx < 0) return;
+      const { data } = chart;
+      const barDsIdx = data.datasets
+        .map((_,i) => i)
+        .filter(i => data.datasets[i].yAxisID !== 'y1' && data.datasets[i].type !== 'line');
+      // Only datasets that actually have a value at curYearIdx
+      const active = barDsIdx.filter(i => data.datasets[i].data[curYearIdx] != null);
+      const n = active.length;
+      if (n <= 1) return; // nothing to split
+
+      const refMeta = chart.getDatasetMeta(active[0]);
+      const refBar  = refMeta.data[curYearIdx];
+      if (!refBar) return;
+      const fullW = refBar.width; // slot width (barPct already applied)
+      const unitW = fullW / n;
+      const cx    = refBar.x;
+
+      active.forEach((dsIdx, i) => {
+        const bar = chart.getDatasetMeta(dsIdx).data[curYearIdx];
+        if (!bar) return;
+        bar.x     = cx + (i - (n - 1) / 2) * unitW;
+        bar.width = unitW * 0.82; // slight gap between bars
+        if (bar.inflateAmount !== undefined) bar.inflateAmount = 0;
+      });
+    }
+  };
+
+  // ── Plugin 2: KRW value labels above bars + YoY badges above their bar ──
   const topLabelPlugin2 = {
     id: 'topLabel2',
     afterDraw(chart) {
       const { ctx, data } = chart;
 
-      // 1) Collect top-y and center-x per label index from BAR datasets only
-      const topBarY = {};  // idx → smallest y (= tallest bar top)
-      const barCX   = {};  // idx → x center of bars (with grouped:false all bars share same x)
+      // Collect bar x-positions and top-y per dataset label and index
+      const barXByLabel = {}; // {dsLabel: {idx: x}}
+      const topBarY = {};     // {idx: minY (tallest bar)}
       data.datasets.forEach((ds, di) => {
         if (ds.yAxisID === 'y1' || ds.type === 'line') return;
         const meta = chart.getDatasetMeta(di);
         if (!meta.visible) return;
+        if (!barXByLabel[ds.label]) barXByLabel[ds.label] = {};
         meta.data.forEach((bar, idx) => {
-          barCX[idx] = bar.x; // grouped:false → all bar datasets same x per label
+          barXByLabel[ds.label][idx] = bar.x;
           if (topBarY[idx] === undefined || bar.y < topBarY[idx]) topBarY[idx] = bar.y;
         });
       });
 
-      // 2) KRW labels just above each individual bar
+      // 1) KRW value label just above each bar
       data.datasets.forEach((ds, di) => {
         if (ds.yAxisID === 'y1' || ds.type === 'line') return;
         const meta = chart.getDatasetMeta(di);
@@ -1945,16 +1969,26 @@ function renderTrend(){
         });
       });
 
-      // 3) YoY badges above tallest bar in each group (centered)
+      // 2) YoY badge above the corresponding bar
+      // Each YoY dataset maps to its bar dataset label
+      const yoyToBar = {
+        'YoY (\uC2E4\uC801%)': '\uB9E4\uCD9C (KRW)',
+        'YoY (\uBAA9\uD45C%)': '\uBAA9\uD45C',
+        'YoY (\uC608\uC0C1%)': '\uC608\uC0C1',
+      };
+
       data.datasets.filter(ds => ds.yAxisID === 'y1').forEach(ds => {
         const isTarget   = ds.label === 'YoY (\uBAA9\uD45C%)';
         const isForecast = ds.label === 'YoY (\uC608\uC0C1%)';
         const di = data.datasets.indexOf(ds);
         if (!chart.getDatasetMeta(di).visible) return;
+
         ds.data.forEach((val, idx) => {
           if (val == null) return;
-          if ((isTarget || isForecast) && idx !== curYearIdx) return;
-          const cx = barCX[idx]; if (cx === undefined) return;
+          const barLabel = yoyToBar[ds.label];
+          const bx = (barXByLabel[barLabel] || {})[idx];
+          if (bx === undefined) return;
+
           const topY = topBarY[idx] ?? 60;
           const sign = val >= 0 ? '+' : '';
           const lbl  = sign + val.toFixed(1) + '%';
@@ -1964,15 +1998,14 @@ function renderTrend(){
           ctx.font = 'bold 10px Pretendard Variable, sans-serif';
           const tw = ctx.measureText(lbl).width + 10;
           const th = 16;
-          const shiftX = isTarget ? -(tw/2+4) : isForecast ? (tw/2+4) : 0;
-          const tx = cx - tw/2 + shiftX;
-          const ty = topY - th - 22;
+          const tx = bx - tw/2;
+          const ty = topY - th - 24;
           ctx.fillStyle = bg;
           if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, 4); ctx.fill(); }
           else { ctx.fillRect(tx, ty, tw, th); }
           ctx.fillStyle = fg;
           ctx.textAlign = 'center';
-          ctx.fillText(lbl, tx + tw/2, ty + 11);
+          ctx.fillText(lbl, bx, ty + 11);
           ctx.restore();
         });
       });
@@ -1984,6 +2017,7 @@ function renderTrend(){
     type: 'bar',
     data: { labels: allYears.map(y => y===currentYear&&(hasTarget||hasForecast) ? y+'\uB144 \u2605' : y+'\uB144'), datasets: trendDatasets },
     options: { ...chartDefaults,
+      grouped: false,  // past-year bars use full slot; current year split by plugin
       plugins:{...chartDefaults.plugins,
         legend:{...chartDefaults.plugins.legend,
           labels:{
@@ -2012,8 +2046,10 @@ function renderTrend(){
           ticks:{ color:lineColor, font:{family:'Pretendard Variable',size:11}, callback: v => v.toFixed(0)+'%' } }
       }
     },
-    plugins:[topLabelPlugin2]
+    plugins:[groupCurYearPlugin, topLabelPlugin2]
   });
+
+
 
 
   // Country share % over years (top 8)
@@ -2204,6 +2240,17 @@ function renderTrend(){
     }
   };
 
+  // Dynamic max: actual stacked max per year + 20% headroom, rounded to nearest 2
+  const computedTopMax = (() => {
+    let maxStack = 0;
+    years.forEach(y => {
+      let s = 0;
+      trCatTopDS.forEach(ds => { s += ds.data[years.indexOf(y)] || 0; });
+      if (s > maxStack) maxStack = s;
+    });
+    return Math.max(Math.ceil(maxStack * 1.2 / 2) * 2, 4);
+  })();
+
   const sharedTopOpts = { ...chartDefaults,
     plugins:{ ...chartDefaults.plugins,
       legend:{position:'bottom', labels:{font:{family:'Pretendard Variable',size:13}, boxWidth:12, padding:12,
@@ -2218,16 +2265,22 @@ function renderTrend(){
       }},
       tooltip:{callbacks:{label: c => `${c.dataset.label}: ${(c.raw||0).toFixed(1)}%`}}},
     scales:{ x:{...chartDefaults.scales.x, stacked:true, ticks:{font:{size:12,family:'Pretendard Variable'},color:'#57534e'}},
-      y:{...chartDefaults.scales.y, stacked:true, min:0, max: topChartMax,
+      y:{...chartDefaults.scales.y, stacked:true, min:0, max: computedTopMax,
          title:{display:true, text:'기타 제품군 비율 (%)', font:{size:11,family:'Pretendard Variable'}, color:'#78716c', padding:{bottom:4}},
-         ticks:{...chartDefaults.scales.y.ticks, font:{size:11}, stepSize: topChartMax <= 10 ? 2 : 5, callback:v=>v+'%'}} } };
+         ticks:{...chartDefaults.scales.y.ticks, font:{size:11}, stepSize: computedTopMax <= 8 ? 1 : 2, callback:v=>v+'%'}} } };
 
   const sharedBotOpts = { ...chartDefaults,
     plugins:{ ...chartDefaults.plugins,
-      legend:{display:true, position:'bottom', labels:{
-        font:{family:'Pretendard Variable',size:13}, boxWidth:12, padding:12,
-        color:'#3a3632'
-      }},
+      legend:{display:true, position:'bottom',
+        labels:{
+          font:{family:'Pretendard Variable',size:13}, boxWidth:12, padding:12,
+          color:'#3a3632',
+          generateLabels: chart => [{
+            text: '필러', fillStyle:'#5B8DB8', strokeStyle:'#5B8DB8',
+            lineWidth:0, index:0, datasetIndex:0
+          }]
+        }
+      },
       tooltip:{callbacks:{label: c => `필러: ${(c.raw||0).toFixed(1)}%`}}},
     scales:{ x:{...chartDefaults.scales.x, stacked:true, ticks:{font:{size:12,family:'Pretendard Variable'},color:'#57534e'}},
       y:{...chartDefaults.scales.y, stacked:true, min:70, max:100,
@@ -2293,6 +2346,36 @@ function renderCountryDetail(records, list){
   const catArr = [...catMap.entries()].map(([k,v])=>({name:k,krw:v.krw})).sort((a,b)=>b.krw-a.krw);
   const products = [...sumBy(cRec, r=>r.product).entries()].map(([k,v])=>({name:k,krw:v.krw,qty:v.qty})).sort((a,b)=>b.krw-a.krw).slice(0,5);
 
+  // ── 품목별 평균 단가 데이터 준비 ──
+  // 단가 있는 레코드만, 품목별 연도별 평균 단가 집계
+  const hasPriceData = cRec.some(r => r.unitPrice > 0);
+  let priceProducts = [];
+  let priceByProd = {};
+  if (hasPriceData && years.length > 1) {
+    // 품목별 전체 매출 합산 → 상위 5품목 선정
+    const prodRevMap = {};
+    cRec.filter(r=>r.unitPrice>0).forEach(r=>{
+      if (!r.product) return;
+      prodRevMap[r.product] = (prodRevMap[r.product]||0) + r.krw;
+    });
+    priceProducts = Object.entries(prodRevMap).sort((a,b)=>b[1]-a[1]).slice(0,5).map(e=>e[0]);
+    // 품목별 연도별 평균 단가 (외화 기준, KRW 제외)
+    priceProducts.forEach(prod=>{
+      priceByProd[prod] = years.map(y=>{
+        const recs = cRec.filter(r=>r.year===y && r.product===prod && r.unitPrice>0 && r.currency && r.currency!=='KRW');
+        if (!recs.length) return null;
+        const avg = recs.reduce((s,r)=>s+r.unitPrice,0) / recs.length;
+        return +avg.toFixed(2);
+      });
+    });
+    // 통화 샘플 (품목별 대표 통화)
+    priceProducts.forEach(prod=>{
+      const sample = cRec.find(r=>r.product===prod && r.unitPrice>0 && r.currency && r.currency!=='KRW');
+      priceByProd[prod+'__currency'] = sample?.currency || '';
+    });
+  }
+  const showPrice = hasPriceData && years.length > 1 && priceProducts.length > 0;
+
   document.getElementById('country-detail').innerHTML = `
     <div class="country-detail-head">
       <h2>${c}</h2>
@@ -2306,7 +2389,7 @@ function renderCountryDetail(records, list){
     </div>
     <div class="grid grid-2" style="margin-bottom:16px">
       <div class="card">
-        <div class="card-head"><div><div class="card-title">${years.length>1?'연도별':'월별'} 매출 추이</div><div class="card-sub">revenue trend</div></div><span class="card-tag">Trend</span></div>
+        <div class="card-head"><div><div class="card-title">${years.length>1?'연도별':'월별'} 매출 추이</div><div class="card-sub">revenue trend · YoY</div></div><span class="card-tag">Trend</span></div>
         <div class="chart-wrap"><canvas id="cd-trend"></canvas></div>
       </div>
       <div class="card">
@@ -2314,6 +2397,11 @@ function renderCountryDetail(records, list){
         <div class="chart-wrap"><canvas id="cd-cat"></canvas></div>
       </div>
     </div>
+    ${showPrice ? `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head"><div><div class="card-title">품목별 수출 평균 단가 추이</div><div class="card-sub">avg unit price by product · foreign currency</div></div><span class="card-tag">Price</span></div>
+      <div class="chart-wrap" style="height:220px"><canvas id="cd-price"></canvas></div>
+    </div>` : ''}
     <div class="grid grid-2">
       <div class="card">
         <div class="card-head"><div><div class="card-title">${c} 인사이트</div><div class="card-sub">observations</div></div><span class="card-tag">Insight</span></div>
@@ -2325,13 +2413,16 @@ function renderCountryDetail(records, list){
       </div>
     </div>
   `;
-  // trend chart
+  // trend chart (+ YoY overlay for yearly view)
   destroyChart('cd-trend');
+  if (charts['cd-price']) { charts['cd-price'].destroy(); delete charts['cd-price']; }
+
   const cdLabelPlugin = {
     id:'cdLabel',
     afterDatasetsDraw(chart){
       const {ctx} = chart;
       chart.data.datasets.forEach((ds,di)=>{
+        if (ds.yAxisID === 'y1' || ds.type === 'line') return;
         const meta = chart.getDatasetMeta(di);
         if(!meta.visible) return;
         meta.data.forEach((bar,idx)=>{
@@ -2343,20 +2434,76 @@ function renderCountryDetail(records, list){
       });
     }
   };
+
   if (years.length > 1) {
+    // YoY %
+    const cdYoy = yearly.map((v,i) => {
+      if (i===0 || !yearly[i-1]) return null;
+      return +((v - yearly[i-1]) / yearly[i-1] * 100).toFixed(1);
+    });
+    const cdYoyColor = '#e8703a';
     charts['cd-trend'] = new Chart(document.getElementById('cd-trend'), {
       type:'bar',
-      data:{ labels: years.map(y=>y+'년'), datasets:[{ data: yearly, backgroundColor: state.palette[0], borderRadius:3, barPercentage:0.65 }] },
-      options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{display:false}, tooltip:{callbacks:{label: c=>fmt.krw(c.raw)}}}, scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v.toLocaleString()}} } },
+      data:{ labels: years.map(y=>y+'\uB144'), datasets:[
+        { type:'bar', label:'\uB9E4\uCD9C(KRW)', data: yearly, backgroundColor: state.palette[0], borderRadius:3, barPercentage:0.7, yAxisID:'y', order:2 },
+        { type:'line', label:'YoY(%)', data: cdYoy, borderColor:cdYoyColor, backgroundColor:'transparent',
+          yAxisID:'y1', tension:0, pointRadius:5, pointBackgroundColor:'#fff', pointBorderColor:cdYoyColor,
+          pointBorderWidth:2, borderWidth:2.5, order:1 },
+      ]},
+      options:{ ...chartDefaults,
+        plugins:{...chartDefaults.plugins,
+          legend:{display:true, position:'top', labels:{font:{family:'Pretendard Variable',size:11}, boxWidth:10, padding:10, color:'#57534e'}},
+          tooltip:{callbacks:{label: c=> c.dataset.yAxisID==='y1' ? `YoY: ${c.raw==null?'—':(c.raw>=0?'+':'')+c.raw.toFixed(1)+'%'}` : fmt.krw(c.raw)}}},
+        scales:{
+          x: chartDefaults.scales.x,
+          y:{ ...chartDefaults.scales.y, position:'left', ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'\uC5B5':v.toLocaleString()} },
+          y1:{ position:'right', grid:{display:false}, ticks:{ color:cdYoyColor, font:{size:10}, callback:v=>v.toFixed(0)+'%' } }
+        }
+      },
       plugins:[cdLabelPlugin]
     });
   } else {
     charts['cd-trend'] = new Chart(document.getElementById('cd-trend'), {
       type:'bar',
-      data:{ labels: Array.from({length:12},(_,i)=>(i+1)+'월'), datasets:[{ data: monthly, backgroundColor: state.palette[0], borderRadius:2, barPercentage:0.7 }] },
-      options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{display:false}, tooltip:{callbacks:{label: c=>fmt.krw(c.raw)}}}, scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v.toLocaleString()}} } },
+      data:{ labels: Array.from({length:12},(_,i)=>(i+1)+'\uC6D4'), datasets:[{ data: monthly, backgroundColor: state.palette[0], borderRadius:2, barPercentage:0.7 }] },
+      options:{ ...chartDefaults, plugins:{...chartDefaults.plugins, legend:{display:false}, tooltip:{callbacks:{label: c=>fmt.krw(c.raw)}}}, scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'\uC5B5':v.toLocaleString()}} } },
       plugins:[cdLabelPlugin]
     });
+  }
+
+  // ── 품목별 평균 단가 추이 차트 ──
+  if (showPrice) {
+    const priceCanvas = document.getElementById('cd-price');
+    if (priceCanvas) {
+      const priceDS = priceProducts.map((prod, i) => {
+        const currency = priceByProd[prod+'__currency'];
+        return {
+          label: `${prod}${currency ? ' ('+currency+')' : ''}`,
+          data: priceByProd[prod],
+          borderColor: state.palette[i % state.palette.length],
+          backgroundColor: state.palette[i % state.palette.length] + '22',
+          tension: 0.2, pointRadius: 5, pointBackgroundColor: '#fff',
+          pointBorderColor: state.palette[i % state.palette.length],
+          pointBorderWidth: 2, borderWidth: 2.5, fill: false,
+          spanGaps: true,
+        };
+      });
+      charts['cd-price'] = new Chart(priceCanvas, {
+        type:'line',
+        data:{ labels: years.map(y=>y+'\uB144'), datasets: priceDS },
+        options:{ ...chartDefaults,
+          plugins:{...chartDefaults.plugins,
+            legend:{ display:true, position:'bottom', labels:{font:{family:'Pretendard Variable',size:11}, boxWidth:10, padding:10, color:'#57534e'} },
+            tooltip:{ callbacks:{ label: c => c.raw==null ? '(데이터 없음)' : `${c.dataset.label}: ${c.raw.toLocaleString()}` } }
+          },
+          scales:{
+            x: chartDefaults.scales.x,
+            y:{ ...chartDefaults.scales.y, ticks:{ ...chartDefaults.scales.y.ticks,
+                callback: v => v >= 1000 ? v.toLocaleString() : v } }
+          }
+        }
+      });
+    }
   }
   destroyChart('cd-cat');
   charts['cd-cat'] = new Chart(document.getElementById('cd-cat'), {
@@ -2851,7 +2998,14 @@ function renderGoal(){
     const ds = [flatBar('#bcd0ed', targetByMonth, '목표')];
     if (actualByMonth.some(v=>v>0)) ds.push(flatBar(state.palette[0], actualByMonth, '실적'));
     if (hasFcByMonth) ds.push({ type:'bar', label:'예상', data:fcByMonth, backgroundColor:'rgba(16,185,129,0.5)', borderWidth:0, borderRadius:3 });
-    charts['goal-monthly-chart'] = new Chart(document.getElementById('goal-monthly-chart'), { type:'bar', data:{labels:monthLabels,datasets:ds}, options:goalOpts });
+    const goalMonthlyOpts = { ...goalOpts,
+      plugins:{...goalOpts.plugins,
+        legend:{display:true, position:'top',
+          labels:{font:{family:'Pretendard Variable',size:12}, boxWidth:10, padding:12, color:'#3a3632'}
+        }
+      }
+    };
+    charts['goal-monthly-chart'] = new Chart(document.getElementById('goal-monthly-chart'), { type:'bar', data:{labels:monthLabels,datasets:ds}, options:goalMonthlyOpts });
   }
 
   // ② 국가별 달성률
@@ -2859,7 +3013,7 @@ function renderGoal(){
   { const canvas = document.getElementById('goal-country-chart');
     if (canvas) { canvas.style.display=''; canvas.parentElement?.querySelectorAll('.empty-state').forEach(e=>e.remove()); }
     if (target?.byCountry && canvas) {
-      const countries = Object.keys(target.byCountry).sort((a,b)=>target.byCountry[b]-target.byCountry[a]).slice(0,10);
+      const countries = Object.keys(target.byCountry).sort((a,b)=>target.byCountry[b]-target.byCountry[a]).slice(0,6);
       // forecast per country: split total forecast proportionally by target share
       const fcByCountry = c => {
         const totalT = countries.reduce((s,cc)=>(target.byCountry[cc]||0)+s, 0);
