@@ -57,7 +57,6 @@ window.FIREBASE_CONFIG = {
   appId: "1:216128966046:web:36d477009a70acc4e39a8f",
   measurementId: "G-WPT1HHN5SM"
 };
-
 // 데이터 업로드·수정 권한을 가진 관리자 이메일 목록
 window.ADMIN_EMAILS = [
   "sypaek@humedix.com",
@@ -739,6 +738,7 @@ td.fc-td:focus-within{ background:var(--accent-soft); }
     <p style="font-size:13px;color:var(--ink-2);margin-bottom:14px">전월까지는 실적 기준으로 자동 표시, 당월~12월은 행을 추가해 예상 매출을 관리합니다.</p>
     <datalist id="dl-customers"></datalist>
     <datalist id="dl-products"></datalist>
+    <datalist id="dl-categories"></datalist>
     <div id="mfc-container"></div>
   </div>
 </section>
@@ -1797,7 +1797,8 @@ function renderTrend(){
 
   // Build labels & actual data — append currentYear if not in records but has target/forecast
   const allYears = [...years];
-  if (!allYears.includes(currentYear) && (state.targets[currentYear] || (state.forecasts[currentYear]?.length))) {
+  const hasMfcCurrentYear = Object.values(state.monthlyForecasts[currentYear]||{}).flat().length > 0;
+  if (!allYears.includes(currentYear) && (state.targets[currentYear] || hasMfcCurrentYear)) {
     allYears.push(currentYear);
   }
   const allActual = allYears.map(y => years.includes(y) ? yearlyKRW[years.indexOf(y)] : 0);
@@ -1809,12 +1810,20 @@ function renderTrend(){
   });
   const hasTarget = targetData.some(v => v != null);
 
-  // Forecast series: only current year
+  // Forecast series: current year = actual(past months) + monthlyForecasts(current month onwards)
+  const today2 = new Date();
+  const curMonthTrend = today2.getMonth() + 1;
   const forecastData = allYears.map(y => {
     if (y !== currentYear) return null;
-    const fc = state.forecasts[y];
-    if (!fc?.length) return null;
-    return fc.reduce((s,r) => s + (r.krw||0), 0);
+    // past months actual
+    const actualPastKrw = state.records.filter(r=>r.year===y && r.month < curMonthTrend).reduce((s,r)=>s+r.krw, 0);
+    // current+future months forecast
+    const fcFutureKrw = Object.entries(state.monthlyForecasts[y]||{})
+      .filter(([m])=> +m >= curMonthTrend)
+      .flatMap(([,arr])=>arr)
+      .reduce((s,r)=>s+calcMfcKrw(r), 0);
+    const total = actualPastKrw + fcFutureKrw;
+    return total > 0 ? total : null;
   });
   const hasForecast = forecastData.some(v => v != null);
 
@@ -2398,8 +2407,12 @@ function renderGoal(){
   document.getElementById('gk-actual-sub').textContent = year ? `${year}년 실적 · ${actualRecs.length}건` : '';
   document.getElementById('gk-rate').textContent = rate !== null ? (rate*100).toFixed(1)+'%' : '—';
   document.getElementById('gk-rate-sub').textContent = rate !== null ? `목표 대비 달성률` : (tTotal ? '' : '목표 없음');
-  document.getElementById('gk-forecast').textContent = fmt.krw(fcTotal);
-  document.getElementById('gk-forecast-sub').textContent = `${fcRows.length}건 예상 합계`;
+  // 예상매출 KPI = 지난달까지 실적 + 이번달부터 예상 합계
+  { const todayG = new Date(); const curMonG = todayG.getMonth()+1;
+    const pastActual = year ? actualRecs.filter(r=>r.month < curMonG).reduce((s,r)=>s+r.krw,0) : 0;
+    const futFc = year ? Object.entries(state.monthlyForecasts[year]||{}).filter(([m])=>+m>=curMonG).flatMap(([,a])=>a).reduce((s,r)=>s+calcMfcKrw(r),0) : 0;
+    document.getElementById('gk-forecast').textContent = fmt.krw(pastActual + futFc);
+    document.getElementById('gk-forecast-sub').textContent = `실적+예상 연간 합계`; }
 
   const monthLabels = Array.from({length:12},(_,i)=>`${i+1}월`);
   const targetByMonth = target?.byMonth || new Array(12).fill(0);
@@ -2413,17 +2426,19 @@ function renderGoal(){
   const goalOpts = { ...chartDefaults, plugins:{...chartDefaults.plugins, tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt.krw(c.raw)}`}}},
     scales:{ ...chartDefaults.scales, y:{...chartDefaults.scales.y, ticks:{...chartDefaults.scales.y.ticks, callback:v=>v>=1e8?(v/1e8).toFixed(1)+'억':v.toLocaleString()}} } };
 
-  // ① 월별 목표 vs 실적
+  // ① 월별 목표 vs 실적 (예상은 월별 입력값 그대로 사용)
   destroyChart('goal-monthly-chart');
   {
+    // per-month forecast from state.monthlyForecasts
+    const fcByMonth = Array.from({length:12}, (_,i) => {
+      const rows = state.monthlyForecasts[year]?.[i+1] || [];
+      const s = rows.reduce((a,r)=>a+calcMfcKrw(r), 0);
+      return s > 0 ? s : null;
+    });
+    const hasFcByMonth = fcByMonth.some(v=>v!=null);
     const ds = [flatBar('#bcd0ed', targetByMonth, '목표')];
     if (actualByMonth.some(v=>v>0)) ds.push(flatBar(state.palette[0], actualByMonth, '실적'));
-    if (fcTotal>0) {
-      const fcData = new Array(12).fill(null);
-      const remaining = 12-todayMonth-1;
-      if (remaining > 0) for(let i=todayMonth+1;i<12;i++) fcData[i]=Math.round(fcTotal/remaining);
-      ds.push({ type:'bar', label:'예상', data:fcData, backgroundColor:'rgba(16,185,129,0.5)', borderWidth:0, borderRadius:3 });
-    }
+    if (hasFcByMonth) ds.push({ type:'bar', label:'예상', data:fcByMonth, backgroundColor:'rgba(16,185,129,0.5)', borderWidth:0, borderRadius:3 });
     charts['goal-monthly-chart'] = new Chart(document.getElementById('goal-monthly-chart'), { type:'bar', data:{labels:monthLabels,datasets:ds}, options:goalOpts });
   }
 
@@ -2457,11 +2472,20 @@ function renderGoal(){
 
   // ④ 누적 달성 추이
   destroyChart('goal-cumul-chart');
-  { let runT=0, runA=0; const cT=[], cA=[], cF=[];
+  { let runT=0, runA=0, runF=0; const cT=[], cA=[], cF=[];
+    const fcByMonthCumul = Array.from({length:12}, (_,i) => {
+      const rows = state.monthlyForecasts[year]?.[i+1] || [];
+      return rows.reduce((a,r)=>a+calcMfcKrw(r), 0);
+    });
+    const hasFcCumul = fcByMonthCumul.some(v=>v>0);
     for(let m=0;m<12;m++){
       runT+=targetByMonth[m]; runA+=actualByMonth[m];
       cT.push(runT); cA.push(runA);
-      if(m>todayMonth&&fcTotal>0){ const rem=12-todayMonth-1||1; cF.push(Math.round(runA+fcTotal*(m-todayMonth)/rem)); } else cF.push(null);
+      if(hasFcCumul){
+        // from current month onwards, show actual + cumulative forecast
+        if (m >= todayMonth) { runF += fcByMonthCumul[m]; cF.push(runA + runF); }
+        else { cF.push(null); }
+      } else { cF.push(null); }
     }
     charts['goal-cumul-chart'] = new Chart(document.getElementById('goal-cumul-chart'), { type:'line',
       data:{ labels:monthLabels, datasets:[
@@ -2566,22 +2590,26 @@ function getMfc(year, month){
   if (!state.monthlyForecasts[year][month]) state.monthlyForecasts[year][month] = [];
   return state.monthlyForecasts[year][month];
 }
+function calcMfcKrw(r){
+  const q = r.qty||0, u = r.unitPrice||0, e = r.exchangeRate||1;
+  return Math.round(q * u * e) || (r.krw||0);
+}
 function renderMonthlyForecast(year){
   const container = document.getElementById('mfc-container');
   if (!container) return;
   if (!year) { container.innerHTML = '<div class="empty-state">연도를 선택하세요</div>'; return; }
   const today = new Date();
-  const curMonth = today.getMonth() + 1; // 1-based
+  const curMonth = today.getMonth() + 1;
   const admin = isAdmin();
+  const esc2 = s => (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
   let html = '';
   for (let m = 1; m <= 12; m++) {
-    const isPast = m < curMonth;          // 전월: 실적 기준
-    const isCurrent = m === curMonth;     // 당월
-    const isFuture = m > curMonth;
+    const isPast = m < curMonth;
     const actualRecs = state.records.filter(r => r.year === year && r.month === m);
     const actualTotal = actualRecs.reduce((s,r)=>s+r.krw, 0);
     const fcRows = getMfc(year, m);
-    const fcTotal = fcRows.reduce((s,r)=>s+(r.krw||0), 0);
+    fcRows.forEach(r => { r.krw = calcMfcKrw(r); });
+    const fcTotal = fcRows.reduce((s,r)=>s+r.krw, 0);
     const target = state.targets[year]?.byMonth?.[m-1] || 0;
 
     let badgeClass, badgeText, summary;
@@ -2594,7 +2622,6 @@ function renderMonthlyForecast(year){
       badgeText = fcRows.length ? `예상 ${fcRows.length}건` : '예상 없음';
       summary = total ? `${fmt.krw(total)}${target ? ` / 목표 ${fmt.krw(target)}` : ''}` : (target ? `목표 ${fmt.krw(target)}` : '—');
     }
-    const isOpen = isCurrent || (!isPast && m === [12,1,2,3,4,5,6,7,8,9,10,11][curMonth-1]);
 
     html += `<div class="mfc-month" data-month="${m}">
       <div class="mfc-month-head" data-toggle="${m}">
@@ -2602,48 +2629,48 @@ function renderMonthlyForecast(year){
         <span class="mfc-month-badge ${badgeClass}">${badgeText}</span>
         <span style="font-size:13px;color:var(--ink-2);flex:1">${summary}</span>
         ${!isPast && target ? `<span style="font-size:11px;color:var(--ink-3)">달성률: <strong>${actualTotal+fcTotal>0?((actualTotal+fcTotal)/target*100).toFixed(1)+'%':'—'}</strong></span>` : ''}
-        <span style="font-size:12px;color:var(--ink-3)">${isOpen?'▲':'▼'}</span>
+        <span style="font-size:12px;color:var(--ink-3)">${m===curMonth?'▲':'▼'}</span>
       </div>
-      <div class="mfc-month-body ${isOpen?'open':''}" id="mfc-body-${m}">`;
+      <div class="mfc-month-body ${m===curMonth?'open':''}" id="mfc-body-${m}">`;
 
     if (isPast) {
-      // Read-only actual summary
       if (actualRecs.length === 0) {
         html += `<div style="color:var(--ink-3);font-size:13px;padding:8px 0">실적 데이터 없음</div>`;
       } else {
-        const topProds = [...new Map(actualRecs.map(r=>[r.product, r])).values()].sort((a,b)=>b.krw-a.krw).slice(0,5);
         html += `<table class="mfc-row-table"><thead><tr><th>거래처</th><th>제품</th><th class="num">매출</th><th class="num">수량</th></tr></thead><tbody>`;
         html += actualRecs.sort((a,b)=>b.krw-a.krw).slice(0,8).map(r=>`<tr><td>${r.customer}</td><td>${r.product}</td><td class="num">${fmt.krw(r.krw)}</td><td class="num">${(r.qty||0).toLocaleString()}</td></tr>`).join('');
         if (actualRecs.length > 8) html += `<tr><td colspan="4" style="color:var(--ink-3);font-size:11px;padding:4px 8px">... 외 ${actualRecs.length-8}건</td></tr>`;
         html += `</tbody></table>`;
       }
     } else {
-      // Actual (partial, if any) + forecast rows
       if (actualRecs.length > 0) {
         html += `<div style="font-size:11px;color:var(--ink-3);margin-bottom:6px;font-weight:500">▸ 입력된 실적 (${actualRecs.length}건 · ${fmt.krw(actualTotal)})</div>`;
       }
-      // Forecast rows table
       html += `<table class="mfc-row-table" id="mfc-tbl-${m}"><thead><tr>
-        <th>날짜</th><th>거래처</th><th>제품</th><th>분류</th><th class="num">예상매출(원화)</th><th>비고</th>${admin?'<th></th>':''}
+        <th>날짜</th><th>거래처</th><th>제품</th><th>분류</th><th class="num">수량</th><th class="num">단가</th><th class="num">환율</th><th class="num" style="color:var(--accent)">원화(자동)</th>${admin?'<th></th>':''}
       </tr></thead><tbody>`;
-      html += fcRows.map((r,i) => `<tr data-mfc-m="${m}" data-mfc-i="${i}">
-        <td><input class="mfc-input" data-f="date" value="${esc(r.date)}" placeholder="${year}-${String(m).padStart(2,'0')}-01" style="width:90px" ${admin?'':'disabled'}></td>
-        <td><input class="mfc-input" data-f="customer" value="${esc(r.customer)}" placeholder="거래처" list="dl-customers" ${admin?'':'disabled'}></td>
-        <td><input class="mfc-input" data-f="product" value="${esc(r.product)}" placeholder="제품" list="dl-products" ${admin?'':'disabled'}></td>
-        <td><input class="mfc-input" data-f="category" value="${esc(r.category)}" placeholder="분류" style="width:80px" ${admin?'':'disabled'}></td>
-        <td><input class="mfc-input num" type="number" data-f="krw" value="${r.krw||''}" placeholder="0" style="width:100px" ${admin?'':'disabled'}></td>
-        <td><input class="mfc-input" data-f="note" value="${esc(r.note)}" placeholder="비고" ${admin?'':'disabled'}></td>
-        ${admin?`<td><button class="fc-del" data-mfc-del="${i}" data-mfc-m="${m}" style="padding:2px 6px;font-size:11px">✕</button></td>`:''}
-      </tr>`).join('');
+      html += fcRows.map((r,i) => {
+        const krwCalc = r.krw;
+        return `<tr data-mfc-m="${m}" data-mfc-i="${i}">
+          <td><input class="mfc-input" data-f="date" value="${esc2(r.date)}" placeholder="${year}-${String(m).padStart(2,'0')}-01" style="width:88px" ${admin?'':'disabled'}></td>
+          <td><input class="mfc-input" data-f="customer" value="${esc2(r.customer)}" placeholder="거래처" list="dl-customers" ${admin?'':'disabled'}></td>
+          <td><input class="mfc-input" data-f="product" value="${esc2(r.product)}" placeholder="제품" list="dl-products" ${admin?'':'disabled'}></td>
+          <td><input class="mfc-input" data-f="category" value="${esc2(r.category)}" placeholder="분류" list="dl-categories" style="width:80px" ${admin?'':'disabled'}></td>
+          <td><input class="mfc-input num" type="number" data-f="qty" value="${r.qty||''}" placeholder="0" style="width:70px" ${admin?'':'disabled'}></td>
+          <td><input class="mfc-input num" type="number" data-f="unitPrice" value="${r.unitPrice||''}" placeholder="0" style="width:80px" ${admin?'':'disabled'}></td>
+          <td><input class="mfc-input num" type="number" data-f="exchangeRate" value="${r.exchangeRate||''}" placeholder="1" style="width:60px" ${admin?'':'disabled'}></td>
+          <td class="mfc-krw-display" style="font-variant-numeric:tabular-nums;font-size:13px;text-align:right;min-width:90px;color:var(--accent);font-weight:500">${krwCalc ? krwCalc.toLocaleString() : '—'}</td>
+          ${admin?`<td><button class="fc-del" data-mfc-del="${i}" data-mfc-m="${m}" style="padding:2px 6px;font-size:11px">✕</button></td>`:''}
+        </tr>`;
+      }).join('');
       html += `</tbody></table>`;
       if (admin) html += `<button class="btn btn-secondary" data-mfc-add="${m}" style="margin-top:8px;font-size:12px">+ 행 추가</button>`;
-      // Monthly subtotal
       if (fcRows.length) html += `<div style="margin-top:8px;font-size:13px;color:var(--ink-2)">예상 합계: <strong style="color:var(--accent)">${fmt.krw(fcTotal)}</strong></div>`;
     }
     html += `</div></div>`;
   }
   container.innerHTML = html;
-  // Accordion toggle
+
   container.querySelectorAll('[data-toggle]').forEach(btn => {
     btn.addEventListener('click', () => {
       const m = btn.dataset.toggle;
@@ -2652,16 +2679,16 @@ function renderMonthlyForecast(year){
       btn.querySelector('span:last-child').textContent = isNowOpen ? '▲' : '▼';
     });
   });
-  // Add row
+
   container.querySelectorAll('[data-mfc-add]').forEach(btn => {
     btn.addEventListener('click', () => {
       const m = +btn.dataset.mfcAdd;
-      getMfc(year, m).push({ date:`${year}-${String(m).padStart(2,'0')}-01`, customer:'', product:'', category:'', krw:0, note:'' });
+      getMfc(year, m).push({ date:`${year}-${String(m).padStart(2,'0')}-01`, customer:'', product:'', category:'', qty:0, unitPrice:0, exchangeRate:1, krw:0 });
       renderMonthlyForecast(year);
       requestAnimationFrame(()=>{ const body=document.getElementById(`mfc-body-${m}`); if(body) body.classList.add('open'); });
     });
   });
-  // Delete row
+
   container.querySelectorAll('[data-mfc-del]').forEach(btn => {
     btn.addEventListener('click', () => {
       const m=+btn.dataset.mfcM, i=+btn.dataset.mfcDel;
@@ -2670,24 +2697,36 @@ function renderMonthlyForecast(year){
       updateForecastKPIs(year);
     });
   });
-  // Edit cells
+
   container.querySelectorAll('input.mfc-input').forEach(inp => {
     inp.addEventListener('input', () => {
       const tr = inp.closest('tr[data-mfc-m]'); if (!tr) return;
       const m=+tr.dataset.mfcM, i=+tr.dataset.mfcI;
       const rows=getMfc(year,m); if (!rows[i]) return;
       const f=inp.dataset.f;
-      rows[i][f] = f==='krw' ? (parseFloat(inp.value)||0) : inp.value;
+      const numFields = ['qty','unitPrice','exchangeRate'];
+      rows[i][f] = numFields.includes(f) ? (parseFloat(inp.value)||0) : inp.value;
+      rows[i].krw = calcMfcKrw(rows[i]);
+      const krwCell = tr.querySelector('.mfc-krw-display');
+      if (krwCell) krwCell.textContent = rows[i].krw ? rows[i].krw.toLocaleString() : '—';
       updateForecastKPIs(year);
     });
   });
 }
 function updateForecastKPIs(year){
   if (!year) return;
+  const today = new Date();
+  const curMonth = today.getMonth() + 1;
+  // 예상매출 KPI = 지난달까지 실적 + 이번달부터 예상매출 합계
+  const actualPast = state.records.filter(r=>r.year===year && r.month < curMonth).reduce((s,r)=>s+r.krw, 0);
+  const fcFuture = Object.entries(state.monthlyForecasts[year]||{})
+    .filter(([m])=> +m >= curMonth)
+    .flatMap(([,arr])=>arr)
+    .reduce((s,r)=>s+calcMfcKrw(r), 0);
+  const forecastYearTotal = actualPast + fcFuture;
   const allMfc = Object.values(state.monthlyForecasts[year]||{}).flat();
-  const fcTotal = allMfc.reduce((s,r)=>s+(r.krw||0),0);
-  const el = document.getElementById('gk-forecast'); if(el) el.textContent = fmt.krw(fcTotal);
-  const sub = document.getElementById('gk-forecast-sub'); if(sub) sub.textContent = `${allMfc.length}건 예상 합계`;
+  const el = document.getElementById('gk-forecast'); if(el) el.textContent = fmt.krw(forecastYearTotal);
+  const sub = document.getElementById('gk-forecast-sub'); if(sub) sub.textContent = `실적+예상 연간 합계`;
 }
 
 // ============================================================
@@ -3021,6 +3060,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = document.getElementById('cloud-save');
     if (btn) { btn.textContent = '저장 중…'; btn.disabled = true; }
     try {
+      // ── Firestore 연결 테스트 ──────────────────────────────
+      setSyncStatus('Firestore 연결 확인 중…', 'syncing');
+      try {
+        await Promise.race([
+          fbDb.collection('_ping').doc('test').set({ ts: Date.now() }),
+          new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), 8000))
+        ]);
+      } catch (pingErr) {
+        const projectId = window.FIREBASE_CONFIG?.projectId || '알 수 없음';
+        let msg = '';
+        if (pingErr.message === 'TIMEOUT') {
+          msg = `Firestore 연결 실패 (8초 초과)\n\n프로젝트 ID: ${projectId}\n\n[확인사항]\n1. Firebase Console에서 이 프로젝트의 "Firestore Database"가 생성되어 있는지 확인\n   (Realtime Database와 다른 메뉴)\n2. Firestore Database → 규칙 탭 → 게시 버튼 클릭했는지 확인`;
+        } else if (pingErr.code === 'permission-denied') {
+          msg = `Firestore 권한 거부\n\n프로젝트 ID: ${projectId}\n\nFirestore Database → 규칙 탭에서 아래 규칙 입력 후 "게시" 클릭:\nallow read, write: if request.auth != null;`;
+        } else {
+          msg = `Firestore 오류: ${pingErr.code || pingErr.message}\n\n프로젝트 ID: ${projectId}`;
+        }
+        alert(`❌ ${msg}`);
+        setSyncStatus('저장 실패: Firestore 연결 안 됨', 'error');
+        return;
+      }
+      // ── 실제 저장 ──────────────────────────────────────────
       await replaceAllFirestoreRecords(state.records);
       alert(`✅ ${state.records.length}건 저장 완료`);
     } catch (err) {
@@ -3274,9 +3335,11 @@ function showEmptyState(){
 }
 function updateDataLists(){
   const customers = [...new Set(state.records.map(r=>r.customer).filter(Boolean))].sort();
-  const products = [...new Set(state.records.map(r=>r.product).filter(Boolean))].sort();
-  const cDl = document.getElementById('dl-customers'); if(cDl) cDl.innerHTML = customers.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">`).join('');
-  const pDl = document.getElementById('dl-products'); if(pDl) pDl.innerHTML = products.map(p=>`<option value="${p.replace(/"/g,'&quot;')}">`).join('');
+  const products  = [...new Set(state.records.map(r=>r.product).filter(Boolean))].sort();
+  const categories= [...new Set(state.records.map(r=>r.category).filter(Boolean))].sort();
+  const cDl = document.getElementById('dl-customers');  if(cDl) cDl.innerHTML = customers.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">`).join('');
+  const pDl = document.getElementById('dl-products');   if(pDl) pDl.innerHTML = products.map(p=>`<option value="${p.replace(/"/g,'&quot;')}">`).join('');
+  const catDl = document.getElementById('dl-categories');if(catDl) catDl.innerHTML = categories.map(c=>`<option value="${c.replace(/"/g,'&quot;')}">`).join('');
 }
 function activateDashboard(){
   showScreen('app');
