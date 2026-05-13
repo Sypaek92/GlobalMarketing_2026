@@ -3309,7 +3309,7 @@ function renderGoal(){
         return `<tr><td><strong>${m}</strong></td>${qs.map(({t,a})=>`<td class="num">${fmt.krw(t)}</td><td class="num">${fmt.krw(a)}</td><td class="num">${pill(t,a)}</td>`).join('')}<td class="num">${fmt.krw(totT)}</td><td class="num">${fmt.krw(totA)}</td><td class="num">${pill(totT,totA)}</td></tr>`;
       }).join('')}
       ${(()=>{
-        // 해외영업팀 총계 행
+        // 총계 행
         const pill=(t,a)=>{ const p=t>0?a/t:null; const pct=p!==null?(p*100).toFixed(1)+'%':'—'; const cls=p===null?'':p>=1?'over':p>=0.5?'mid':'low'; return `<span class="achieve-pill ${cls}">${pct}</span>`; };
         const totalQs = [0,1,2,3].map(q=>{
           const s=q*3;
